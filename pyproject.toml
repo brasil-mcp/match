@@ -1,6 +1,6 @@
 [project]
 name = "brasil-mcp-match"
-version = "0.0.1"
+version = "0.1.0"
 description = "Verificação privacy-preserving contra base Receita Federal. Match, don't reveal."
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
@@ -8,7 +8,7 @@ authors = [{ name = "Brasil MCP" }]
 requires-python = ">=3.11"
 keywords = ["mcp", "brasil", "cnpj", "kyc", "compliance", "receita-federal", "lgpd"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3.11",
