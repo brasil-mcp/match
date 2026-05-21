@@ -26,6 +26,11 @@ import httpx
 
 _LOG = logging.getLogger(__name__)
 
+# TODO[URL]: a Receita Federal moveu hosting da base CNPJ múltiplas vezes
+# (2024: dados.gov.br portal, 2025: arquivos.receitafederal.gov.br, 2026: ?).
+# A URL abaixo retorna 404 em maio/2026 — verificar o caminho canônico atual
+# antes do primeiro run de ingestão. Provavelmente algo sob
+# arquivos.receitafederal.gov.br ou um novo CDN. Atualizar aqui e nos testes.
 BASE_URL = "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/"
 _HREF_RE = re.compile(r'href="([^"]+\.zip)"', re.IGNORECASE)
 
