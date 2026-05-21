@@ -144,3 +144,15 @@ def test_current_period_default_uses_today() -> None:
     p = current_period()
     assert len(p) == 7
     assert p[4] == "-"
+
+
+def test_api_key_record_plan_config_property() -> None:
+    """ApiKeyRecord.plan_config delegates to get_plan_config (line 31)."""
+    record = _mk_record(plan=Plan.STARTER)
+    cfg = record.plan_config
+    assert cfg == get_plan_config(Plan.STARTER)
+
+
+def test_api_key_record_plan_config_free() -> None:
+    record = _mk_record(plan=Plan.FREE)
+    assert record.plan_config == get_plan_config(Plan.FREE)

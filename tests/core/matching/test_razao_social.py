@@ -92,6 +92,24 @@ def test_fuzzy_phonetic_typo() -> None:
     assert r.match is True
 
 
+def test_fuzzy_phonetic_branch_explicit() -> None:
+    """A case engineered to hit the WRatio-only branch.
+
+    The candidate is similar enough by WRatio (weighted) but fails the
+    substring check for FUZZY_PREFIX and token_set ratio is too low for
+    FUZZY_WORD. Covers razao_social.py line 90.
+    """
+    # partial=94.7 but n_info NOT substring of n_rf (and vice versa);
+    # token_set=47.6 < 85; WRatio=85.3 ≥ 85.
+    r = match_razao_social(
+        "ABCDEFGHIJ",
+        "ABCDEFGHIK XYZ ABC DEF GHIJ KLMN",
+        tolerance=0.85,
+    )
+    assert r.match is True
+    assert r.hint == MatchHint.FUZZY_PHONETIC
+
+
 # ------------ No match ------------
 
 

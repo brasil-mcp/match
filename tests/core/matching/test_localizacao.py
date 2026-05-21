@@ -5,10 +5,21 @@ from __future__ import annotations
 import pytest
 
 from brasil_mcp_match.core.matching.localizacao import (
+    _normalize_string,
     match_cep,
     match_municipio,
     match_uf,
 )
+
+
+def test_normalize_string_empty_returns_empty() -> None:
+    """Empty input fast-path (line 23)."""
+    assert _normalize_string("") == ""
+
+
+def test_normalize_string_strips_accents() -> None:
+    assert _normalize_string("são paulo") == "SAO PAULO"
+
 
 # ------------ match_uf ------------
 

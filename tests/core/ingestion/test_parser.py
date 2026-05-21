@@ -179,6 +179,60 @@ def test_parser_invalid_date_returns_none() -> None:
     assert row["razao_social"] == "X"
 
 
+def test_parser_malformed_date_returns_none() -> None:
+    """Date that parses as 8 chars but is logically invalid (e.g., month 13) → None."""
+    # data_situacao_cadastral position 7 (index 6) on ESTABELECIMENTOS
+    fields = ["12345678", "0001", "95", "1", "X", "2", "20241301"]  # month 13 invalid
+    # Pad to 30 columns
+    fields += [""] * (30 - len(fields))
+    csv_bytes = (";".join(f'"{f}"' for f in fields) + "\n").encode("latin-1")
+    row = next(parse_csv_bytes(csv_bytes, ESTABELECIMENTOS_COLS))
+    # Date parsing failure → None (covers parser.py lines 155-156).
+    assert row["data_situacao_cadastral"] is None
+
+
+def test_parse_zip_routes_ref_files_to_codigo_descricao(tmp_path: Path) -> None:
+    """REF_* file inside zip should be parsed with 2-column [codigo, descricao]."""
+    zip_path = tmp_path / "F.K03200$Z.D40510.CNAECSV.zip"
+    inner_name = "F.K03200$Z.D40510.CNAECSV"
+    csv_content = '"4731800";"Comercio varejista de combustiveis"\n"4732600";"Comercio outro"\n'
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr(inner_name, csv_content.encode("latin-1"))
+
+    rows = list(parse_zip(zip_path))
+    assert len(rows) == 2
+    assert rows[0] == {"codigo": "4731800", "descricao": "Comercio varejista de combustiveis"}
+    assert rows[1] == {"codigo": "4732600", "descricao": "Comercio outro"}
+
+
+def test_parse_zip_skips_empty_lines_inside(tmp_path: Path) -> None:
+    """Empty lines inside a zip CSV should be skipped (parser.py line 225)."""
+    zip_path = tmp_path / "K3241.K03200Y0.D40510.EMPRECSV.zip"
+    inner_name = "K3241.K03200Y0.D40510.EMPRECSV"
+    csv_content = (
+        '"12345678";"X";"2135";"05";"0";"01";""\n'
+        "\n\n"  # blank rows in the middle
+        '"99999999";"Y";"2135";"05";"0";"01";""\n'
+    )
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr(inner_name, csv_content.encode("latin-1"))
+
+    rows = list(parse_zip(zip_path))
+    assert len(rows) == 2
+    assert rows[0]["cnpj_basico"] == "12345678"
+    assert rows[1]["cnpj_basico"] == "99999999"
+
+
+def test_parse_zip_skips_unknown_when_no_override(tmp_path: Path) -> None:
+    """Unknown inner files and no columns_override → continue (parser.py line 216)."""
+    zip_path = tmp_path / "mixed-unknown.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("readme.txt", b"not a csv")  # UNKNOWN type, no columns
+        zf.writestr("LICENSE", b"some license blob")  # UNKNOWN
+    rows = list(parse_zip(zip_path))
+    assert rows == []
+
+
 # ------------ Zip wrapper ------------
 
 
