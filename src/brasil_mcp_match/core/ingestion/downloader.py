@@ -26,12 +26,54 @@ import httpx
 
 _LOG = logging.getLogger(__name__)
 
-# TODO[URL]: a Receita Federal moveu hosting da base CNPJ múltiplas vezes
-# (2024: dados.gov.br portal, 2025: arquivos.receitafederal.gov.br, 2026: ?).
-# A URL abaixo retorna 404 em maio/2026 — verificar o caminho canônico atual
-# antes do primeiro run de ingestão. Provavelmente algo sob
-# arquivos.receitafederal.gov.br ou um novo CDN. Atualizar aqui e nos testes.
-BASE_URL = "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/"
+# Receita Federal moveu hosting da base CNPJ múltiplas vezes (2023 → 2024 →
+# 2025 → 2026). Tentamos uma chain de URLs históricas conhecidas. O primeiro
+# que retornar 200 (ou listing válido) ganha. Override via env var
+# `BRASIL_MCP_MATCH_RF_BASE_URL`.
+_BASE_URL_CANDIDATES = (
+    # 2025-2026 (mais comum em projetos ativos como br-acc, sinarc, libercapital)
+    "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/",
+    "https://arquivos.receitafederal.gov.br/CNPJ/",
+    # Pré-2024 (legacy, ainda às vezes responde)
+    "https://dadosabertos.rfb.gov.br/CNPJ/",
+    "http://200.152.38.155/CNPJ/",
+)
+
+
+def resolve_base_url(client: httpx.Client | None = None) -> str:
+    """Discover the current canonical RF base URL by probing the candidate chain.
+
+    Honors `BRASIL_MCP_MATCH_RF_BASE_URL` env var override. Returns the first
+    URL that responds with a 2xx HEAD. Raises `RuntimeError` if none respond.
+    """
+    import os
+
+    override = os.environ.get("BRASIL_MCP_MATCH_RF_BASE_URL")
+    if override:
+        return override.rstrip("/") + "/"
+
+    own_client = client is None
+    if client is None:
+        client = httpx.Client(timeout=15.0, follow_redirects=True)
+    try:
+        for url in _BASE_URL_CANDIDATES:
+            try:
+                resp = client.head(url)
+                if 200 <= resp.status_code < 300:
+                    return url
+            except httpx.HTTPError:
+                continue
+        raise RuntimeError(
+            "Nenhuma URL base da Receita Federal respondeu. Defina "
+            "BRASIL_MCP_MATCH_RF_BASE_URL manualmente com a URL canônica atual."
+        )
+    finally:
+        if own_client:
+            client.close()
+
+
+# Lazy resolution — só faz HTTP quando uma operação real é chamada.
+BASE_URL = _BASE_URL_CANDIDATES[0]  # default; overridden by resolve_base_url() at runtime
 _HREF_RE = re.compile(r'href="([^"]+\.zip)"', re.IGNORECASE)
 
 
@@ -53,8 +95,9 @@ class DownloadedFile:
 
 def list_release(release: str) -> list[RemoteFile]:
     """List zip files in a given RF release (e.g., "2026-04")."""
-    release_url = urljoin(BASE_URL, f"{release}/")
     with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+        base = resolve_base_url(client)
+        release_url = urljoin(base, f"{release}/")
         resp = client.get(release_url)
         resp.raise_for_status()
         zip_names = sorted(set(_HREF_RE.findall(resp.text)))
