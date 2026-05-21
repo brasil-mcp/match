@@ -55,6 +55,16 @@ def _envelope(query_id: str, base_updated_at: str, payload: dict[str, Any]) -> d
 
 
 def _record_or_404(cnpj_completo: str, service: ServiceContext) -> Any:
+    """Look up CNPJ, but first enforce opt-out (LGPD Art. 18)."""
+    if service.is_opt_out_blocked(cnpj_completo):
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=ErrorObj(
+                ErrorCode.OPT_OUT_RECORD,
+                "Este CNPJ optou por remoção (Art. 18 LGPD). Contate-nos.",
+                "This CNPJ opted out (LGPD Art. 18). Contact us.",
+            ).to_dict(),
+        )
     record = service.repo.find_by_cnpj(cnpj_completo)
     if record is None:
         raise HTTPException(

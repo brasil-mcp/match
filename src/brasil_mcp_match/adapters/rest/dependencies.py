@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
 from fastapi import Depends, Header, HTTPException, status
 
@@ -18,15 +19,24 @@ from brasil_mcp_match.core.auth.api_key import (
     AuthResult,
     authenticate,
 )
+from brasil_mcp_match.core.lgpd.opt_out import OptOutRecord
 from brasil_mcp_match.core.repository.cnpj_repo import CnpjRepo
 
 
 @dataclass(frozen=True, slots=True)
 class ServiceContext:
-    """Bundle of services injected into routes. Replaceable in tests."""
+    """Bundle of services injected into routes. Replaceable in tests.
+
+    `audit_lookup(query_id, api_key_hash)` → audit row dict or None
+    `opt_out_register(cnpj, proof)` → OptOutRecord
+    `is_opt_out_blocked(cnpj)` → bool
+    """
 
     repo: CnpjRepo
     api_key_lookup: Callable[[str], ApiKeyRecord | None]
+    audit_lookup: Callable[[str, str], dict[str, Any] | None]
+    opt_out_register: Callable[..., OptOutRecord]
+    is_opt_out_blocked: Callable[[str], bool]
     base_updated_at: date
 
 

@@ -9,18 +9,57 @@ from __future__ import annotations
 import sys
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 import brasil_mcp_match
+from brasil_mcp_match.adapters.rest.routes_lgpd import router as lgpd_router
 from brasil_mcp_match.adapters.rest.routes_match import router as match_router
+
+
+def _rate_key(request: Request) -> str:
+    """Rate-limit key: API key hash if present, else IP. Avoids one client
+    starving others by sharing IPs (NAT / Cloudflare)."""
+    key = request.headers.get("X-Brasil-MCP-Key")
+    if key:
+        import hashlib
+
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=_rate_key, default_limits=["120/minute"])
 
 app = FastAPI(
     title="Brasil MCP Match",
     description="Verificação privacy-preserving contra base Receita Federal. Match, don't reveal.",
     version=brasil_mcp_match.__version__,
 )
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+
+@app.exception_handler(RateLimitExceeded)
+def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": {
+                "code": "PLAN_LIMIT",
+                "message_pt": "Limite de requisições por minuto excedido.",
+                "message_en": "Rate limit per minute exceeded.",
+            }
+        },
+    )
+
 
 app.include_router(match_router)
+app.include_router(lgpd_router)
 
 
 @app.get("/v1/health")
