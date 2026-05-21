@@ -1,7 +1,7 @@
 """FastAPI app — REST API do brasil-mcp-match.
 
-Stub mínimo: health check + base info. Os endpoints de match/check entram após
-o pipeline de ingestão estar funcionando.
+Endpoints de health, admin, match e check. ServiceContext (repo + auth lookup)
+é injetado via dependency override em tests.
 """
 
 from __future__ import annotations
@@ -12,13 +12,15 @@ import uvicorn
 from fastapi import FastAPI
 
 import brasil_mcp_match
-from brasil_mcp_match.core.ingestion.manifest import latest_successful
+from brasil_mcp_match.adapters.rest.routes_match import router as match_router
 
 app = FastAPI(
     title="Brasil MCP Match",
     description="Verificação privacy-preserving contra base Receita Federal. Match, don't reveal.",
     version=brasil_mcp_match.__version__,
 )
+
+app.include_router(match_router)
 
 
 @app.get("/v1/health")
@@ -28,6 +30,10 @@ def health() -> dict[str, str]:
 
 @app.get("/v1/admin/refresh-status")
 def refresh_status() -> dict[str, object]:
+    # Lazy import — manifest reads from Postgres; only invoked when this endpoint
+    # is hit. Tests that don't exercise this endpoint don't need a live DB.
+    from brasil_mcp_match.core.ingestion.manifest import latest_successful
+
     run = latest_successful()
     if run is None:
         return {"loaded": False, "rf_release": None, "loaded_at": None}
