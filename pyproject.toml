@@ -1,6 +1,6 @@
 [project]
 name = "brasil-mcp-match"
-version = "0.1.1"
+version = "0.2.0"
 description = "Verificação privacy-preserving contra base Receita Federal. Match, don't reveal."
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
