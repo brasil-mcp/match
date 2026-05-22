@@ -54,8 +54,9 @@ def register_tools(mcp: FastMCP, ctx_resolver: Any) -> None:
 
     @mcp.tool()
     def match_razao_social_tool(cnpj: str, nome: str, tolerance: float = 0.85) -> dict[str, Any]:
-        """Verifica se o nome informado bate com a razão social registrada na Receita Federal
-        pro CNPJ, sem expor a razão social registrada. Retorna match boolean + confidence + hint."""
+        """Verifica se o nome informado bate com a razão social registrada na Receita Federal pro CNPJ, sem expor a razão social registrada. Retorna match boolean + confidence + hint.
+
+        NOTA: A base do Match exclui empresas MEI e CNPJs com situação cadastral não-ativa (suspensa/inapta/baixada/nula). CNPJs nesses casos retornam CNPJ_NOT_FOUND."""
         ctx = ctx_resolver()
         cnpj_norm = _normalize_cnpj(cnpj)
         record = ctx.repo.find_by_cnpj(cnpj_norm)
@@ -76,7 +77,7 @@ def register_tools(mcp: FastMCP, ctx_resolver: Any) -> None:
 
     @mcp.tool()
     def check_situacao_cadastral_tool(cnpj: str) -> dict[str, Any]:
-        """Retorna a situação cadastral (ativa, suspensa, inapta, baixada, nula) do CNPJ na Receita Federal."""
+        """Retorna a situação cadastral do CNPJ. A base do Match só inclui empresas ATIVAS — qualquer outro estado (suspensa/inapta/baixada/nula) ou empresa MEI retorna CNPJ_NOT_FOUND."""
         ctx = ctx_resolver()
         cnpj_norm = _normalize_cnpj(cnpj)
         record = ctx.repo.find_by_cnpj(cnpj_norm)
@@ -100,7 +101,7 @@ def register_tools(mcp: FastMCP, ctx_resolver: Any) -> None:
 
     @mcp.tool()
     def check_porte_empresa_tool(cnpj: str) -> dict[str, Any]:
-        """Retorna o porte (MEI/ME/EPP/DEMAIS) + flag de Simples Nacional do CNPJ."""
+        """Retorna o porte (ME/EPP/DEMAIS) + flag de Simples Nacional do CNPJ. NOTA: A base do Match exclui MEI por design — is_mei sempre false."""
         ctx = ctx_resolver()
         cnpj_norm = _normalize_cnpj(cnpj)
         record = ctx.repo.find_by_cnpj(cnpj_norm)
@@ -125,7 +126,9 @@ def register_tools(mcp: FastMCP, ctx_resolver: Any) -> None:
 
     @mcp.tool()
     def match_uf_tool(cnpj: str, uf: str) -> dict[str, Any]:
-        """Verifica se a UF informada bate com a UF registrada na Receita Federal pro CNPJ."""
+        """Verifica se a UF informada bate com a UF registrada na Receita Federal pro CNPJ.
+
+        NOTA: Base exclui MEI e CNPJs não-ativos — CNPJs nesses casos retornam CNPJ_NOT_FOUND."""
         ctx = ctx_resolver()
         cnpj_norm = _normalize_cnpj(cnpj)
         record = ctx.repo.find_by_cnpj(cnpj_norm)

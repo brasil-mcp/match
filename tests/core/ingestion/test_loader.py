@@ -314,3 +314,73 @@ def test_ref_filetypes_contains_all_ref_types() -> None:
     # Non-ref types must NOT be there
     assert FileType.EMPRESA not in loader.REF_FILETYPES
     assert FileType.ESTABELECIMENTO not in loader.REF_FILETYPES
+
+
+# ---- Filtros LGPD/relevância (default: exclui MEI + não-ativas) ----
+
+
+def test_load_empresas_default_filters_mei(monkeypatch):
+    """Por default, MEI (porte 01) é excluído via WHERE no INSERT."""
+    monkeypatch.delenv("BRASIL_MCP_MATCH_INCLUDE_MEI", raising=False)
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.rowcount = 0
+    cur.copy.return_value.__enter__.return_value = MagicMock()
+    loader.load_empresas([{"cnpj_basico": "12345678", "porte_empresa": "01"}], conn)
+    # Find the INSERT statement among the cursor calls
+    insert_calls = [
+        call.args[0] for call in cur.execute.call_args_list if "INSERT INTO" in call.args[0]
+    ]
+    assert insert_calls, "expected an INSERT call"
+    assert "porte_empresa IS DISTINCT FROM '01'" in insert_calls[0]
+
+
+def test_load_empresas_with_include_mei_env(monkeypatch):
+    """BRASIL_MCP_MATCH_INCLUDE_MEI=1 → sem filtro de MEI."""
+    monkeypatch.setenv("BRASIL_MCP_MATCH_INCLUDE_MEI", "1")
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.rowcount = 0
+    cur.copy.return_value.__enter__.return_value = MagicMock()
+    loader.load_empresas([{"cnpj_basico": "12345678", "porte_empresa": "01"}], conn)
+    insert_calls = [
+        call.args[0] for call in cur.execute.call_args_list if "INSERT INTO" in call.args[0]
+    ]
+    assert insert_calls
+    # No WHERE clause means no MEI filter
+    assert "IS DISTINCT FROM" not in insert_calls[0]
+
+
+def test_load_estabelecimentos_default_filters_non_ativa(monkeypatch):
+    """Por default, não-ativas (situacao != '2') são excluídas via WHERE."""
+    monkeypatch.delenv("BRASIL_MCP_MATCH_INCLUDE_INATIVAS", raising=False)
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.rowcount = 0
+    cur.copy.return_value.__enter__.return_value = MagicMock()
+    loader.load_estabelecimentos(
+        [{"cnpj_basico": "12345678", "cnpj_ordem": "0001", "situacao_cadastral": "8"}], conn
+    )
+    insert_calls = [
+        call.args[0] for call in cur.execute.call_args_list if "INSERT INTO" in call.args[0]
+    ]
+    assert insert_calls
+    assert "situacao_cadastral = '2'" in insert_calls[0]
+
+
+def test_load_estabelecimentos_with_include_inativas_env(monkeypatch):
+    """BRASIL_MCP_MATCH_INCLUDE_INATIVAS=1 → sem filtro de situação."""
+    monkeypatch.setenv("BRASIL_MCP_MATCH_INCLUDE_INATIVAS", "1")
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.rowcount = 0
+    cur.copy.return_value.__enter__.return_value = MagicMock()
+    loader.load_estabelecimentos(
+        [{"cnpj_basico": "12345678", "cnpj_ordem": "0001", "situacao_cadastral": "8"}], conn
+    )
+    insert_calls = [
+        call.args[0] for call in cur.execute.call_args_list if "INSERT INTO" in call.args[0]
+    ]
+    assert insert_calls
+    # No WHERE clause means no situacao filter
+    assert " WHERE " not in insert_calls[0]

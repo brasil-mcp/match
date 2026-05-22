@@ -87,6 +87,38 @@ Full input/output schemas + cURL examples: [`docs/tools.md`](docs/tools.md).
 
 ---
 
+
+## Base coverage — what's in (and what's out)
+
+The Match base **intentionally excludes** two categories of CNPJs from the ingested Postgres database:
+
+1. **MEI (Microempreendedor Individual).** A MEI is a sole-proprietorship where the legal entity is bound to a single individual's CPF. Treating MEIs the same as regular companies would expose individual-person PII through every match operation. They're excluded by default.
+
+2. **Companies with non-active cadastral status.** Suspended, unfit, inactive, and dissolved companies aren't relevant for KYC, onboarding, or any forward-looking B2B operation. They're noise. Excluded by default.
+
+**Consequence:** `CNPJ_NOT_FOUND` now means one of:
+- The CNPJ doesn't exist (typo, hallucination, invalid number).
+- The CNPJ exists but is a MEI.
+- The CNPJ exists but isn't currently active.
+
+If you need to distinguish these cases, use `brasil-mcp-essentials.validate_cnpj` first (offline, free) to confirm the CNPJ is structurally valid before calling Match.
+
+### Override (for special use cases)
+
+The exclusion is enforced at ingestion via SQL filters in the `loader`. Override via environment variables before running `brasil-mcp-match-ingest`:
+
+```bash
+# Include MEI in the base
+export BRASIL_MCP_MATCH_INCLUDE_MEI=1
+
+# Include non-active CNPJs
+export BRASIL_MCP_MATCH_INCLUDE_INATIVAS=1
+
+uv run brasil-mcp-match-ingest --release 2026-04
+```
+
+The future `brasil-mcp-compliance` (Phase 5) will likely use both overrides to maintain a full historical trail. The default Match deployment exports neither.
+
 ## MCP client setup (Claude Desktop)
 
 ```json

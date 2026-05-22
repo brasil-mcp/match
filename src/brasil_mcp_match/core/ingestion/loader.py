@@ -17,6 +17,7 @@ batem com o schema da tabela alvo.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from typing import Any
 
@@ -27,6 +28,38 @@ from brasil_mcp_match.core.ingestion.parser import FileType
 # --- coluna ordering por tabela ---------------------------------------------
 # Mantemos listas explícitas (sem ler do parser) pra deixar 100% claro qual
 # coluna vai pro Postgres + o tipo esperado no Python-side.
+
+# --- Filter configuration (LGPD + base relevance) -----------------------------
+#
+# Por padrão a base do Match exclui:
+#   1. Empresas com situacao_cadastral != 'ativa' (código 2). Empresas
+#      suspensas/inaptas/baixadas/nulas tornam o KYC ruidoso.
+#   2. Empresas MEI (porte 01). MEI = pessoa física com CPF acoplado — vira
+#      PII sensível. Match B2B real opera em ME/EPP/DEMAIS.
+#
+# Override via env var pra casos de uso futuros (ex: Compliance Fase 5 vai
+# precisar da base completa pra histórico).
+
+
+def _include_inativas() -> bool:
+    """True se a base deve incluir empresas não-ativas. Default False."""
+    return os.environ.get("BRASIL_MCP_MATCH_INCLUDE_INATIVAS", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _include_mei() -> bool:
+    """True se a base deve incluir empresas MEI. Default False."""
+    return os.environ.get("BRASIL_MCP_MATCH_INCLUDE_MEI", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
 
 _EMPRESA_COLS = (
     "cnpj_basico",
@@ -107,6 +140,7 @@ def _staged_copy(
     columns: tuple[str, ...],
     conflict_target: str,
     src_to_dest: dict[str, str] | None = None,
+    where_clause: str | None = None,
 ) -> int:
     """Stage rows to a TEMP table via COPY, then upsert into the final table.
 
@@ -135,9 +169,11 @@ def _staged_copy(
         f"CREATE TEMP TABLE {tmp_name} (LIKE {final_table} INCLUDING DEFAULTS) ON COMMIT DROP"
     )
     copy_sql = f"COPY {tmp_name} ({cols_sql}) FROM STDIN"
+    where_sql = f" WHERE {where_clause}" if where_clause else ""
     insert_sql = (
         f"INSERT INTO {final_table} ({cols_sql}) "
-        f"SELECT {cols_sql} FROM {tmp_name} "
+        f"SELECT {cols_sql} FROM {tmp_name}"
+        f"{where_sql} "
         f"ON CONFLICT ({conflict_target}) DO NOTHING"
     )
     drop_sql = f"DROP TABLE {tmp_name}"
@@ -158,22 +194,29 @@ def _staged_copy(
 
 
 def load_empresas(rows: Iterable[dict[str, Any]], conn: psycopg.Connection[Any]) -> int:
+    # Por padrão exclui MEI (porte_empresa = '01'). Override: BRASIL_MCP_MATCH_INCLUDE_MEI=1.
+    where = None if _include_mei() else "porte_empresa IS DISTINCT FROM '01'"
     return _staged_copy(
         rows,
         conn,
         final_table="empresa",
         columns=_EMPRESA_COLS,
         conflict_target="cnpj_basico",
+        where_clause=where,
     )
 
 
 def load_estabelecimentos(rows: Iterable[dict[str, Any]], conn: psycopg.Connection[Any]) -> int:
+    # Por padrão exclui não-ativas (situacao_cadastral != '2').
+    # Override: BRASIL_MCP_MATCH_INCLUDE_INATIVAS=1.
+    where = None if _include_inativas() else "situacao_cadastral = '2'"
     return _staged_copy(
         rows,
         conn,
         final_table="estabelecimento",
         columns=_ESTABELECIMENTO_COLS,
         conflict_target="cnpj_basico, cnpj_ordem",
+        where_clause=where,
     )
 
 
