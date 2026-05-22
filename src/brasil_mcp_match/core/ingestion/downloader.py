@@ -27,14 +27,20 @@ import httpx
 _LOG = logging.getLogger(__name__)
 
 # Receita Federal moveu hosting da base CNPJ múltiplas vezes (2023 → 2024 →
-# 2025 → 2026). Tentamos uma chain de URLs históricas conhecidas. O primeiro
-# que retornar 200 (ou listing válido) ganha. Override via env var
-# `BRASIL_MCP_MATCH_RF_BASE_URL`.
+# 2025 → 2026). Em 2026 a hospedagem oficial é via Nextcloud share link.
+# Override via env var `BRASIL_MCP_MATCH_RF_BASE_URL` quando o token mudar.
+#
+# NOTA: o downloader (list_release + download_file) ainda assume parsing
+# de HTML listing direto — funciona pras URLs legacy mas NÃO pro Nextcloud.
+# Pra fazer o primeiro ingest real em 2026+, precisa adaptar pra usar a
+# Nextcloud OCS API ou filenames hardcoded. Tracked como TODO.
 _BASE_URL_CANDIDATES = (
-    # 2025-2026 (mais comum em projetos ativos como br-acc, sinarc, libercapital)
+    # 2026 — Nextcloud share oficial RF (verificado em 2026-05-22)
+    "https://arquivos.receitafederal.gov.br/index.php/s/YggdBLfdninEJX9",
+    # 2025 (legacy direct listing — pode voltar a responder)
     "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/",
     "https://arquivos.receitafederal.gov.br/CNPJ/",
-    # Pré-2024 (legacy, ainda às vezes responde)
+    # Pré-2024 (último recurso)
     "https://dadosabertos.rfb.gov.br/CNPJ/",
     "http://200.152.38.155/CNPJ/",
 )
