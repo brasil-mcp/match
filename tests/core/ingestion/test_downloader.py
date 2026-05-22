@@ -13,6 +13,7 @@ import pytest
 from brasil_mcp_match.core.ingestion import downloader as downloader_mod
 from brasil_mcp_match.core.ingestion.downloader import (
     RemoteFile,
+    _parse_nextcloud_share,
     _sha256_file,
     download_file,
     download_release,
@@ -318,3 +319,197 @@ def test_sha256_file_empty(tmp_path: Path) -> None:
 def test_iter_bytes_path_works_with_bytesio() -> None:
     buf = io.BytesIO(b"hello")
     assert buf.getvalue() == b"hello"
+
+
+# ------------ _parse_nextcloud_share ------------
+
+
+def test_parse_nextcloud_share_matches_canonical() -> None:
+    result = _parse_nextcloud_share(
+        "https://arquivos.receitafederal.gov.br/index.php/s/YggdBLfdninEJX9"
+    )
+    assert result is not None
+    host, webdav_root, token = result
+    assert host == "https://arquivos.receitafederal.gov.br"
+    assert webdav_root == "https://arquivos.receitafederal.gov.br/public.php/webdav/"
+    assert token == "YggdBLfdninEJX9"
+
+
+def test_parse_nextcloud_share_trailing_slash_ok() -> None:
+    result = _parse_nextcloud_share("https://x.example/index.php/s/TOKEN/")
+    assert result is not None
+    assert result[2] == "TOKEN"
+
+
+def test_parse_nextcloud_share_returns_none_for_legacy_url() -> None:
+    assert _parse_nextcloud_share("https://x.example/CNPJ/") is None
+    assert _parse_nextcloud_share("https://x.example/dados/cnpj/dados_abertos_cnpj/") is None
+
+
+# ------------ list_release via Nextcloud ------------
+
+
+_NEXTCLOUD_PROPFIND_RESPONSE = """<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/public.php/webdav/2026-04/</d:href>
+    <d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/public.php/webdav/2026-04/Empresas0.zip</d:href>
+    <d:propstat><d:prop>
+      <d:getcontentlength>5242880</d:getcontentlength>
+      <d:getlastmodified>Sun, 12 Apr 2026 18:10:43 GMT</d:getlastmodified>
+    </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/public.php/webdav/2026-04/Cnaes.zip</d:href>
+    <d:propstat><d:prop>
+      <d:getcontentlength>1024</d:getcontentlength>
+      <d:getlastmodified>Sun, 12 Apr 2026 18:10:43 GMT</d:getlastmodified>
+    </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/public.php/webdav/2026-04/readme.txt</d:href>
+    <d:propstat><d:prop>
+      <d:getcontentlength>42</d:getcontentlength>
+    </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  </d:response>
+</d:multistatus>"""
+
+
+def test_list_release_uses_nextcloud_when_share_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "BRASIL_MCP_MATCH_RF_BASE_URL",
+        "https://arquivos.receitafederal.gov.br/index.php/s/TOKEN123",
+    )
+
+    fake_client = MagicMock()
+    fake_client.__enter__.return_value = fake_client
+    fake_client.__exit__.return_value = False
+
+    propfind_resp = MagicMock()
+    propfind_resp.text = _NEXTCLOUD_PROPFIND_RESPONSE
+    propfind_resp.raise_for_status = MagicMock()
+    fake_client.request.return_value = propfind_resp
+
+    with patch.object(httpx, "Client", return_value=fake_client):
+        files = list_release("2026-04")
+
+    # PROPFIND called with correct args
+    args, kwargs = fake_client.request.call_args
+    assert args[0] == "PROPFIND"
+    assert args[1] == ("https://arquivos.receitafederal.gov.br/public.php/webdav/2026-04/")
+    assert kwargs["auth"] == ("TOKEN123", "")
+    assert kwargs["headers"] == {"Depth": "1"}
+
+    # Only .zip files returned, sorted, with absolute URLs + auth propagated.
+    assert [f.name for f in files] == ["Cnaes.zip", "Empresas0.zip"]
+    cnaes, empresas = files
+    assert cnaes.url == (
+        "https://arquivos.receitafederal.gov.br/public.php/webdav/2026-04/Cnaes.zip"
+    )
+    assert cnaes.size_bytes == 1024
+    assert cnaes.auth == ("TOKEN123", "")
+    assert empresas.size_bytes == 5242880
+    assert empresas.last_modified == "Sun, 12 Apr 2026 18:10:43 GMT"
+
+
+def test_list_release_nextcloud_skips_response_without_href(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """<d:response> sem <d:href> ou com href vazio é silenciosamente ignorado."""
+    monkeypatch.setenv(
+        "BRASIL_MCP_MATCH_RF_BASE_URL",
+        "https://x.example/index.php/s/T",
+    )
+
+    xml = """<?xml version="1.0"?>
+    <d:multistatus xmlns:d="DAV:">
+      <d:response><d:propstat><d:prop></d:prop></d:propstat></d:response>
+      <d:response><d:href></d:href></d:response>
+      <d:response>
+        <d:href>/public.php/webdav/2026-04/A.zip</d:href>
+        <d:propstat><d:prop>
+          <d:getcontentlength>10</d:getcontentlength>
+        </d:prop></d:propstat>
+      </d:response>
+    </d:multistatus>"""
+
+    fake_client = MagicMock()
+    fake_client.__enter__.return_value = fake_client
+    fake_client.__exit__.return_value = False
+    fake_client.request.return_value = MagicMock(text=xml, raise_for_status=MagicMock())
+
+    with patch.object(httpx, "Client", return_value=fake_client):
+        files = list_release("2026-04")
+
+    assert [f.name for f in files] == ["A.zip"]
+
+
+def test_list_release_nextcloud_handles_missing_size_and_lastmod(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BRASIL_MCP_MATCH_RF_BASE_URL", "https://x.example/index.php/s/T")
+
+    xml = """<?xml version="1.0"?>
+    <d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/public.php/webdav/2026-04/B.zip</d:href>
+        <d:propstat><d:prop></d:prop></d:propstat>
+      </d:response>
+    </d:multistatus>"""
+
+    fake_client = MagicMock()
+    fake_client.__enter__.return_value = fake_client
+    fake_client.__exit__.return_value = False
+    fake_client.request.return_value = MagicMock(text=xml, raise_for_status=MagicMock())
+
+    with patch.object(httpx, "Client", return_value=fake_client):
+        files = list_release("2026-04")
+
+    assert len(files) == 1
+    assert files[0].size_bytes is None
+    assert files[0].last_modified is None
+
+
+# ------------ download_file passes auth when present ------------
+
+
+def test_download_file_passes_auth_to_httpx_stream(tmp_path: Path) -> None:
+    remote = RemoteFile(
+        name="A.zip",
+        url="https://x.example/public.php/webdav/2026-04/A.zip",
+        size_bytes=3,
+        last_modified=None,
+        auth=("TOKEN", ""),
+    )
+
+    class FakeStreamResp:
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *a: Any) -> bool:
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self, chunk_size: int = 0) -> Any:
+            yield from [b"abc"]
+
+    captured: dict[str, Any] = {}
+
+    def fake_stream(method: str, url: str, **kwargs: Any) -> Any:
+        captured["method"] = method
+        captured["url"] = url
+        captured["auth"] = kwargs.get("auth")
+        return FakeStreamResp()
+
+    with patch.object(httpx, "stream", side_effect=fake_stream):
+        download_file(remote, tmp_path)
+
+    assert captured["auth"] == ("TOKEN", "")

@@ -1,14 +1,22 @@
 """Downloader dos dumps mensais da Receita Federal.
 
-A RF publica em https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/<YYYY-MM>/.
+A RF publica em duas modalidades:
+- Legacy (≤ 2025): HTTP directory listing em
+  ``https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/<YYYY-MM>/``.
+- 2026+: Nextcloud public share (WebDAV) em
+  ``https://arquivos.receitafederal.gov.br/index.php/s/<token>``.
+
 Conteúdo: ~30 zips totalizando ~5 GB comprimido (~30 GB descomprimido).
 
 Estratégia:
-- Lista o diretório HTTP da release (parsing leve do HTML).
-- Para cada arquivo .zip, baixa via streaming pra ``data/rf-cache/<YYYY-MM>/``.
+- ``resolve_base_url`` descobre qual URL canônica responde (env override → chain).
+- Se for Nextcloud share, usa PROPFIND no public WebDAV (``/public.php/webdav/``)
+  com Basic Auth — share token como username, senha vazia. Caso contrário, faz
+  parsing leve do HTML listing.
+- Para cada arquivo .zip, baixa via streaming pra ``data/rf-cache/<YYYY-MM>/``,
+  reaproveitando a mesma auth (quando aplicável).
 - Calcula sha256 progressivo.
-- Pula arquivos já baixados com hash conhecido (idempotência).
-- Compara `Last-Modified` no HEAD pra detectar mudança caso a RF refaça o release.
+- Pula arquivos já baixados com tamanho conhecido (idempotência).
 
 Não descompacta — descompactação é parte do parser, que faz streaming.
 """
@@ -18,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin
@@ -29,11 +38,6 @@ _LOG = logging.getLogger(__name__)
 # Receita Federal moveu hosting da base CNPJ múltiplas vezes (2023 → 2024 →
 # 2025 → 2026). Em 2026 a hospedagem oficial é via Nextcloud share link.
 # Override via env var `BRASIL_MCP_MATCH_RF_BASE_URL` quando o token mudar.
-#
-# NOTA: o downloader (list_release + download_file) ainda assume parsing
-# de HTML listing direto — funciona pras URLs legacy mas NÃO pro Nextcloud.
-# Pra fazer o primeiro ingest real em 2026+, precisa adaptar pra usar a
-# Nextcloud OCS API ou filenames hardcoded. Tracked como TODO.
 _BASE_URL_CANDIDATES = (
     # 2026 — Nextcloud share oficial RF (verificado em 2026-05-22)
     "https://arquivos.receitafederal.gov.br/index.php/s/YggdBLfdninEJX9",
@@ -44,6 +48,10 @@ _BASE_URL_CANDIDATES = (
     "https://dadosabertos.rfb.gov.br/CNPJ/",
     "http://200.152.38.155/CNPJ/",
 )
+
+# Padrão de share público Nextcloud: <scheme>://<host>/index.php/s/<token>[/]
+_NEXTCLOUD_SHARE_RE = re.compile(r"^(https?://[^/]+)/index\.php/s/([^/]+)/?$")
+_DAV_NS = "{DAV:}"
 
 
 def resolve_base_url(client: httpx.Client | None = None) -> str:
@@ -89,6 +97,9 @@ class RemoteFile:
     url: str
     size_bytes: int | None
     last_modified: str | None  # HTTP date header verbatim
+    # Credentials a serem aplicadas no GET (Basic Auth tupla (user, pass)).
+    # Usado pelo transport Nextcloud public-share — o token vira o username.
+    auth: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,10 +110,78 @@ class DownloadedFile:
     sha256: str
 
 
+def _parse_nextcloud_share(base_url: str) -> tuple[str, str, str] | None:
+    """Detect a Nextcloud public share URL.
+
+    Returns ``(host_origin, webdav_root, token)`` or ``None`` if not a share.
+
+    - ``host_origin`` = scheme + authority (sem path), p/ remontar URLs absolutas.
+    - ``webdav_root`` = ``<host_origin>/public.php/webdav/`` (com trailing slash).
+    - ``token`` = share token, usado como username em Basic Auth (senha vazia).
+    """
+    m = _NEXTCLOUD_SHARE_RE.match(base_url.rstrip("/"))
+    if not m:
+        return None
+    host_origin = m.group(1)
+    token = m.group(2)
+    return host_origin, f"{host_origin}/public.php/webdav/", token
+
+
+def _list_release_nextcloud(
+    client: httpx.Client,
+    host_origin: str,
+    webdav_root: str,
+    token: str,
+    release: str,
+) -> list[RemoteFile]:
+    """List a release directory via Nextcloud public WebDAV (PROPFIND Depth: 1)."""
+    release_url = urljoin(webdav_root, f"{release}/")
+    auth = (token, "")
+    resp = client.request(
+        "PROPFIND",
+        release_url,
+        auth=auth,
+        headers={"Depth": "1"},
+    )
+    resp.raise_for_status()
+    root = ET.fromstring(resp.text)
+    out: list[RemoteFile] = []
+    for response in root.findall(f"{_DAV_NS}response"):
+        href_el = response.find(f"{_DAV_NS}href")
+        if href_el is None or not href_el.text:
+            continue
+        href = href_el.text
+        if not href.lower().endswith(".zip"):
+            continue
+        name = href.rstrip("/").rsplit("/", 1)[-1]
+        size_el = response.find(f".//{_DAV_NS}getcontentlength")
+        lastmod_el = response.find(f".//{_DAV_NS}getlastmodified")
+        size_bytes = int(size_el.text) if size_el is not None and size_el.text else None
+        last_modified = lastmod_el.text if lastmod_el is not None else None
+        out.append(
+            RemoteFile(
+                name=name,
+                url=host_origin + href,
+                size_bytes=size_bytes,
+                last_modified=last_modified,
+                auth=auth,
+            )
+        )
+    return sorted(out, key=lambda f: f.name)
+
+
 def list_release(release: str) -> list[RemoteFile]:
-    """List zip files in a given RF release (e.g., "2026-04")."""
+    """List zip files in a given RF release (e.g., "2026-04").
+
+    Auto-detecta o transport: Nextcloud public share (WebDAV PROPFIND) ou
+    HTTP directory listing legacy.
+    """
     with httpx.Client(timeout=30.0, follow_redirects=True) as client:
         base = resolve_base_url(client)
+        nc = _parse_nextcloud_share(base)
+        if nc is not None:
+            host_origin, webdav_root, token = nc
+            return _list_release_nextcloud(client, host_origin, webdav_root, token, release)
         release_url = urljoin(base, f"{release}/")
         resp = client.get(release_url)
         resp.raise_for_status()
@@ -145,7 +224,13 @@ def download_file(remote: RemoteFile, dest_dir: Path) -> DownloadedFile:
     hasher = hashlib.sha256()
     bytes_written = 0
     tmp_path = dest_path.with_suffix(dest_path.suffix + ".tmp")
-    with httpx.stream("GET", remote.url, timeout=300.0, follow_redirects=True) as resp:
+    with httpx.stream(
+        "GET",
+        remote.url,
+        timeout=300.0,
+        follow_redirects=True,
+        auth=remote.auth,
+    ) as resp:
         resp.raise_for_status()
         with tmp_path.open("wb") as fh:
             for chunk in resp.iter_bytes(chunk_size=1 << 20):
