@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from brasil_mcp_match.adapters.mcp.server import build_server
+from brasil_mcp_match.adapters.mcp.server import build_server, build_stdio_context
 from brasil_mcp_match.adapters.mcp.tools import RequestContext
 from brasil_mcp_match.core.auth.api_key import ApiKeyRecord
 from brasil_mcp_match.core.auth.plan import Plan
@@ -167,3 +167,12 @@ async def test_mcp_error_payload_for_unknown_code() -> None:
     assert out["error"]["code"] == "UNKNOWN_CODE"
     assert out["error"]["message_pt"] == "UNKNOWN_CODE"
     assert out["error"]["message_en"] == "UNKNOWN_CODE"
+
+
+def test_build_stdio_context(fake_repo) -> None:
+    ctx = build_stdio_context(fake_repo, date(2026, 4, 1))
+    assert ctx.repo is fake_repo
+    assert ctx.base_updated_at == date(2026, 4, 1)
+    assert ctx.auth_record.plan == Plan.ENTERPRISE
+    assert ctx.auth_record.key_hash == "stdio-local-dev"
+    assert ctx.auth_record.is_revoked is False

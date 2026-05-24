@@ -6,6 +6,18 @@ the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-24
+
+### Added
+
+- **MCP stdio transport** wired in `brasil-mcp-match-server` console script.
+  Single-user dev mode reads `BRASIL_MCP_MATCH_DATABASE_URL`, opens a long-lived
+  connection, and serves the 4 v0.1.0 tools over stdio. Suitable for Claude
+  Desktop / Claude Code local config. SSE remains the production transport.
+- `build_stdio_context(repo, base_updated_at)` helper exposes the synthetic
+  single-user `RequestContext` (plan=ENTERPRISE, key_hash=`stdio-local-dev`)
+  so tests and downstream wrappers can reuse it.
+
 ## [0.1.0] - 2026-05-21
 
 First public release of `brasil-mcp-match` — Fase 2 of Brasil MCP.
