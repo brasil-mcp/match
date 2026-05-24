@@ -27,6 +27,10 @@ class ErrorCode(StrEnum):
     BASE_NOT_LOADED = "BASE_NOT_LOADED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
+    # Internal sister-service auth (routes_internal.py)
+    INTERNAL_AUTH_REQUIRED = "INTERNAL_AUTH_REQUIRED"
+    INTERNAL_DISABLED = "INTERNAL_DISABLED"
+
 
 @dataclass(frozen=True, slots=True)
 class ErrorObj:

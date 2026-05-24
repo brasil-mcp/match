@@ -16,6 +16,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 import brasil_mcp_match
+from brasil_mcp_match.adapters.rest.routes_internal import router as internal_router
 from brasil_mcp_match.adapters.rest.routes_lgpd import router as lgpd_router
 from brasil_mcp_match.adapters.rest.routes_match import router as match_router
 
@@ -60,6 +61,7 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> Response:
 
 app.include_router(match_router)
 app.include_router(lgpd_router)
+app.include_router(internal_router)
 
 
 @app.get("/v1/health")
