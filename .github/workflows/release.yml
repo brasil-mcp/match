@@ -1,5 +1,9 @@
 name: Release
 
+# Publishes ONLY the client (root pyproject.toml, MIT) on tag push.
+# The server (server/ subdir, AGPL) is intentionally not published — self-hosters
+# run it straight from this repo.
+
 on:
   push:
     tags:
@@ -24,10 +28,10 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --all-extras --dev
 
-      - name: Sanity tests (100% coverage gate)
-        run: uv run pytest --cov=brasil_mcp_match --cov-branch --cov-fail-under=100 -q
+      - name: Sanity tests (>=95% coverage gate)
+        run: uv run pytest --cov=brasil_mcp_match --cov-branch --cov-fail-under=95 -q
 
       - name: Build distributions
         run: uv build

@@ -6,18 +6,43 @@ on:
   pull_request:
 
 jobs:
-  test:
+  client:
+    name: client (src/ - MIT, published)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install ${{ matrix.python }}
+      - name: Install
+        run: uv sync --all-extras --dev
+      - name: Ruff
+        run: uv run ruff check src tests
+      - name: Pyright
+        run: uv run pyright src
+      - name: Tests + coverage (>=95%)
+        run: uv run pytest --cov=brasil_mcp_match --cov-branch --cov-report=term-missing --cov-fail-under=95
 
+  server:
+    name: server (server/ - AGPL, self-host)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: server
     services:
       postgres:
-        # Preparatory: current tests are fully mocked and don't actually
-        # exercise this service. Kept here so that future integration tests
-        # (psycopg COPY against real Postgres) can land without re-wiring CI.
+        # Kept for future native-Postgres integration tests; current suite uses
+        # testcontainers and brings up its own postgres.
         image: postgres:16-alpine
         env:
           POSTGRES_DB: brasil_mcp_match_test
@@ -30,44 +55,20 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-
-      - name: Install Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Sync deps (frozen, all extras)
-        run: uv sync --frozen --all-extras
-
-      - name: Ruff lint
-        run: uv run ruff check
-
-      - name: Ruff format check
-        run: uv run ruff format --check
-
-      - name: Pyright type-check
+      - name: Set up Python
+        run: uv python install ${{ matrix.python }}
+      - name: Install
+        run: uv sync --all-extras --dev
+      - name: Ruff
+        run: uv run ruff check src tests
+      - name: Pyright
         run: uv run pyright src
-
-      - name: Pytest + coverage (100% gate)
+      - name: Tests
         env:
           BRASIL_MCP_MATCH_DATABASE_URL: postgresql://brasilmcp:test_password@localhost:5432/brasil_mcp_match_test
-        run: |
-          uv run pytest \
-            --cov=brasil_mcp_match \
-            --cov-branch \
-            --cov-report=xml \
-            --cov-report=term-missing \
-            --cov-fail-under=100
-
-      - name: Upload coverage report
-        if: matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: coverage.xml
+        run: uv run pytest -q

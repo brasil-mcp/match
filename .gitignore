@@ -3,21 +3,24 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-dist/
 *.egg-info/
 .venv/
 venv/
-.pytest_cache/
+.uv-cache/
+dist/
+build/
 .coverage
+.coverage.*
 htmlcov/
 coverage.xml
+.pytest_cache/
 .ruff_cache/
 .pyright/
 *.log
 .DS_Store
 .env
 .env.local
-# RF data cache
-data/rf-cache/
-data/postgres/
+
+# RF data cache (server)
+server/data/rf-cache/
+server/data/postgres/
