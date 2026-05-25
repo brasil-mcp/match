@@ -199,3 +199,37 @@ CREATE TABLE IF NOT EXISTS api_key_usage (
     queries INT NOT NULL DEFAULT 0,
     PRIMARY KEY (api_key_id, period)
 );
+
+-- =============================================================
+-- Signup requests (self-service signup)
+-- =============================================================
+-- End-user signups created via POST /v1/signup/start.
+-- Free plan: row created with status='delivered' + key_plaintext_once set,
+-- cleared as soon as the start-response returns the plaintext.
+-- Paid plan: row starts as status='pending' with asaas_payment_id; flipped
+-- to 'paid' by the webhook handler, then to 'delivered' on first status poll.
+CREATE TABLE IF NOT EXISTS signup_request (
+    id BIGSERIAL PRIMARY KEY,
+    polling_token UUID NOT NULL UNIQUE,
+    email TEXT NOT NULL,
+    cpf_cnpj TEXT,
+    plan TEXT NOT NULL CHECK (plan IN ('free', 'starter', 'pro', 'enterprise')),
+    ip_address TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'paid', 'delivered', 'expired', 'cancelled')),
+    asaas_customer_id TEXT,
+    asaas_payment_id TEXT,
+    api_key_id INT REFERENCES api_key(id),
+    key_plaintext_once TEXT,
+    delivered_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_signup_request_email ON signup_request(email);
+CREATE INDEX IF NOT EXISTS idx_signup_request_ip_created
+    ON signup_request(ip_address, created_at);
+CREATE INDEX IF NOT EXISTS idx_signup_request_asaas_payment
+    ON signup_request(asaas_payment_id);
+CREATE INDEX IF NOT EXISTS idx_signup_request_status_pending
+    ON signup_request(status) WHERE status = 'pending';

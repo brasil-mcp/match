@@ -19,8 +19,10 @@ from brasil_mcp_match_server.core.auth.api_key import (
     AuthResult,
     authenticate,
 )
+from brasil_mcp_match_server.core.auth.api_key_repo import ApiKeyRepo
 from brasil_mcp_match_server.core.lgpd.opt_out import OptOutRecord
 from brasil_mcp_match_server.core.repository.cnpj_repo import CnpjRepo
+from brasil_mcp_match_server.core.signup.repo import SignupRepo
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +32,8 @@ class ServiceContext:
     `audit_lookup(query_id, api_key_hash)` → audit row dict or None
     `opt_out_register(cnpj, proof)` → OptOutRecord
     `is_opt_out_blocked(cnpj)` → bool
+    `signup_repo` / `api_key_repo` → write-side persistence for self-service
+        signup. May be None if signup is disabled (legacy contexts).
     """
 
     repo: CnpjRepo
@@ -38,6 +42,8 @@ class ServiceContext:
     opt_out_register: Callable[..., OptOutRecord]
     is_opt_out_blocked: Callable[[str], bool]
     base_updated_at: date
+    signup_repo: SignupRepo | None = None
+    api_key_repo: ApiKeyRepo | None = None
 
 
 # Filled at app startup. Tests override.

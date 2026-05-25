@@ -19,6 +19,8 @@ import brasil_mcp_match_server
 from brasil_mcp_match_server.adapters.rest.routes_internal import router as internal_router
 from brasil_mcp_match_server.adapters.rest.routes_lgpd import router as lgpd_router
 from brasil_mcp_match_server.adapters.rest.routes_match import router as match_router
+from brasil_mcp_match_server.adapters.rest.routes_signup import router as signup_router
+from brasil_mcp_match_server.adapters.rest.routes_webhooks import router as webhooks_router
 
 
 def _rate_key(request: Request) -> str:
@@ -62,6 +64,19 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> Response:
 app.include_router(match_router)
 app.include_router(lgpd_router)
 app.include_router(internal_router)
+# Self-service signup + Asaas webhook. The signup endpoints are gated by the
+# ``SIGNUP_ENABLED`` env var (free flow + paid bootstrap) and additionally by
+# ``ASAAS_API_KEY`` (paid flow). The webhook handler always mounts so Asaas
+# retries succeed once env is set; signature verification fails closed if
+# ``ASAAS_WEBHOOK_SECRET`` is unset. Brevo delivery (paid only) needs
+# ``BREVO_API_KEY``, optional ``BREVO_FROM_EMAIL``, ``BREVO_FROM_NAME``.
+#
+# Per-IP rate-limit on /v1/signup/start: enforced inside the route
+# (5 starts / hour total, plus 1 free / 30d per IP and 1 free per email
+# lifetime — see core.signup.service). slowapi's global default
+# (120/minute by key) still applies on top.
+app.include_router(signup_router)
+app.include_router(webhooks_router)
 
 
 @app.get("/v1/health")

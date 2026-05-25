@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -17,6 +18,7 @@ from brasil_mcp_match_server.core.auth.api_key import ApiKeyRecord, hash_key
 from brasil_mcp_match_server.core.auth.plan import Plan
 from brasil_mcp_match_server.core.lgpd.opt_out import OptOutRecord, fifteen_business_days_after
 from brasil_mcp_match_server.core.repository.cnpj_repo import EmpresaRecord
+from brasil_mcp_match_server.core.signup.models import SignupRequest
 
 _PETROBRAS = EmpresaRecord(
     cnpj_basico="33000167",
@@ -143,9 +145,160 @@ def api_key_hash() -> str:
     return _API_KEY_HASH
 
 
+class FakeSignupRepo:
+    """In-memory SignupRepo for adapter tests."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, SignupRequest] = {}
+        self._id_counter = itertools.count(start=1)
+
+    def create(
+        self,
+        *,
+        polling_token: str,
+        email: str,
+        cpf_cnpj: str | None,
+        plan: Plan,
+        ip_address: str,
+        status: str,
+        asaas_customer_id: str | None,
+        asaas_payment_id: str | None,
+        api_key_id: int | None,
+        key_plaintext_once: str | None,
+        delivered_at: datetime | None,
+        created_at: datetime,
+        expires_at: datetime,
+    ) -> SignupRequest:
+        rec = SignupRequest(
+            id=next(self._id_counter),
+            polling_token=polling_token,
+            email=email,
+            cpf_cnpj=cpf_cnpj,
+            plan=plan,
+            ip_address=ip_address,
+            status=status,
+            asaas_customer_id=asaas_customer_id,
+            asaas_payment_id=asaas_payment_id,
+            api_key_id=api_key_id,
+            key_plaintext_once=key_plaintext_once,
+            delivered_at=delivered_at,
+            created_at=created_at,
+            expires_at=expires_at,
+        )
+        self.rows[polling_token] = rec
+        return rec
+
+    def find_by_token(self, polling_token: str) -> SignupRequest | None:
+        return self.rows.get(polling_token)
+
+    def find_by_email(self, email: str) -> SignupRequest | None:
+        for rec in sorted(self.rows.values(), key=lambda r: r.created_at):
+            if rec.email == email:
+                return rec
+        return None
+
+    def count_free_signups_for_ip_since(self, ip_address: str, since: datetime) -> int:
+        return sum(
+            1
+            for r in self.rows.values()
+            if r.ip_address == ip_address and r.plan == Plan.FREE and r.created_at >= since
+        )
+
+    def count_signups_for_ip_since(self, ip_address: str, since: datetime) -> int:
+        return sum(
+            1 for r in self.rows.values()
+            if r.ip_address == ip_address and r.created_at >= since
+        )
+
+    def find_by_asaas_payment_id(self, asaas_payment_id: str) -> SignupRequest | None:
+        for r in self.rows.values():
+            if r.asaas_payment_id == asaas_payment_id:
+                return r
+        return None
+
+    def mark_paid(
+        self, polling_token: str, *, api_key_id: int, key_plaintext_once: str
+    ) -> SignupRequest | None:
+        rec = self.rows.get(polling_token)
+        if rec is None or rec.status != "pending":
+            return None
+        updated = replace(
+            rec,
+            status="paid",
+            api_key_id=api_key_id,
+            key_plaintext_once=key_plaintext_once,
+        )
+        self.rows[polling_token] = updated
+        return updated
+
+    def mark_delivered(self, polling_token: str) -> SignupRequest | None:
+        rec = self.rows.get(polling_token)
+        if rec is None or rec.status != "paid":
+            return None
+        updated = replace(
+            rec,
+            status="delivered",
+            delivered_at=datetime.now(UTC),
+            key_plaintext_once=None,
+        )
+        self.rows[polling_token] = updated
+        return updated
+
+    def mark_expired(self, polling_token: str) -> None:
+        rec = self.rows.get(polling_token)
+        if rec is not None and rec.status == "pending":
+            self.rows[polling_token] = replace(rec, status="expired")
+
+    def mark_cancelled(self, polling_token: str) -> None:
+        rec = self.rows.get(polling_token)
+        if rec is not None:
+            self.rows[polling_token] = replace(rec, status="cancelled")
+
+
+class FakeApiKeyRepo:
+    """In-memory ApiKeyRepo for adapter tests."""
+
+    def __init__(self) -> None:
+        self.rows: dict[int, ApiKeyRecord] = {}
+        self._id_counter = itertools.count(start=100)
+
+    def insert(
+        self,
+        *,
+        key_hash: str,
+        plan: Plan,
+        customer_email: str | None,
+    ) -> ApiKeyRecord:
+        new_id = next(self._id_counter)
+        rec = ApiKeyRecord(
+            id=new_id,
+            key_hash=key_hash,
+            plan=plan,
+            customer_email=customer_email,
+            is_revoked=False,
+        )
+        self.rows[new_id] = rec
+        return rec
+
+    def revoke(self, api_key_id: int) -> None:
+        rec = self.rows.get(api_key_id)
+        if rec is not None:
+            self.rows[api_key_id] = replace(rec, is_revoked=True)
+
+
 @pytest.fixture
 def fake_repo() -> FakeRepo:
     return FakeRepo()
+
+
+@pytest.fixture
+def fake_signup_repo() -> FakeSignupRepo:
+    return FakeSignupRepo()
+
+
+@pytest.fixture
+def fake_api_key_repo() -> FakeApiKeyRepo:
+    return FakeApiKeyRepo()
 
 
 @pytest.fixture
@@ -160,7 +313,11 @@ def fake_opt_out() -> FakeOptOutStore:
 
 @pytest.fixture
 def service_context(
-    fake_repo: FakeRepo, fake_audit: FakeAuditStore, fake_opt_out: FakeOptOutStore
+    fake_repo: FakeRepo,
+    fake_audit: FakeAuditStore,
+    fake_opt_out: FakeOptOutStore,
+    fake_signup_repo: FakeSignupRepo,
+    fake_api_key_repo: FakeApiKeyRepo,
 ) -> ServiceContext:
     ctx = ServiceContext(
         repo=fake_repo,
@@ -169,6 +326,8 @@ def service_context(
         opt_out_register=fake_opt_out.register,
         is_opt_out_blocked=fake_opt_out.is_blocked,
         base_updated_at=date(2026, 5, 1),
+        signup_repo=fake_signup_repo,
+        api_key_repo=fake_api_key_repo,
     )
     configure_service(ctx)
     return ctx
