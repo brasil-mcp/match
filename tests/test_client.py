@@ -47,11 +47,28 @@ def test_load_config_missing_url(monkeypatch):
         load_config_from_env()
 
 
-def test_load_config_missing_key(monkeypatch):
+def test_load_config_no_key_is_ok(monkeypatch):
+    """Key is optional as of v0.4.0 — signup tools work without one."""
     monkeypatch.setenv("BRASIL_MCP_MATCH_URL", "https://api.example")
     monkeypatch.delenv("BRASIL_MCP_MATCH_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="BRASIL_MCP_MATCH_KEY"):
-        load_config_from_env()
+    monkeypatch.delenv("BRASIL_MCP_MATCH_TIMEOUT", raising=False)
+    cfg = load_config_from_env()
+    assert cfg.api_key == ""
+    assert cfg.has_api_key is False
+
+
+def test_load_config_empty_key_is_ok(monkeypatch):
+    """Empty string is treated as 'no key'."""
+    monkeypatch.setenv("BRASIL_MCP_MATCH_URL", "https://api.example")
+    monkeypatch.setenv("BRASIL_MCP_MATCH_KEY", "")
+    cfg = load_config_from_env()
+    assert cfg.api_key == ""
+    assert cfg.has_api_key is False
+
+
+def test_client_config_has_api_key_true():
+    cfg = ClientConfig(base_url="https://api.example", api_key="abc", timeout=1.0)
+    assert cfg.has_api_key is True
 
 
 # ----- happy-path forwarding -----
@@ -239,3 +256,152 @@ async def test_aclose_with_owned_client_does_not_raise():
     cfg = ClientConfig(base_url="https://api.example", api_key="k", timeout=1.0)
     c = MatchHttpClient(cfg)
     await c.aclose()
+
+
+# ----- signup tools (v0.4.0) -----
+
+
+async def test_signup_start_free_plan_happy():
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        seen["body"] = req.read().decode()
+        return httpx.Response(
+            200,
+            json={
+                "status": "delivered",
+                "polling_token": "pt_abc",
+                "api_key": "bmm_live_key123",
+                "plan": "free",
+                "queries_per_day": 10,
+                "queries_per_month": 50,
+            },
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.signup_start("u@example.com", "free")
+    finally:
+        await client.aclose()
+    assert seen["url"] == "https://example.test/match/v1/signup/start"
+    assert '"email":"u@example.com"' in seen["body"]
+    assert '"plan":"free"' in seen["body"]
+    # cpf_cnpj None → field omitted from payload
+    assert "cpf_cnpj" not in seen["body"]
+    assert out["status"] == "delivered"
+    assert out["api_key"] == "bmm_live_key123"
+
+
+async def test_signup_start_paid_plan_happy():
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = req.read().decode()
+        return httpx.Response(
+            200,
+            json={
+                "status": "pending",
+                "polling_token": "pt_paid",
+                "checkout_url": "https://asaas.com/checkout/abc",
+                "plan": "pro",
+                "amount_brl": "199.00",
+            },
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.signup_start("u@example.com", "pro", "12345678901")
+    finally:
+        await client.aclose()
+    assert '"cpf_cnpj":"12345678901"' in seen["body"]
+    assert out["status"] == "pending"
+    assert out["checkout_url"] == "https://asaas.com/checkout/abc"
+
+
+async def test_signup_start_error_envelope_unwrapped():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409,
+            json={
+                "detail": {
+                    "code": "EMAIL_ALREADY_HAS_KEY",
+                    "message_pt": "Já existe",
+                    "message_en": "Already exists",
+                }
+            },
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.signup_start("u@example.com", "free")
+    finally:
+        await client.aclose()
+    assert out["error"]["code"] == "EMAIL_ALREADY_HAS_KEY"
+
+
+async def test_signup_status_pending():
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        seen["body"] = req.read().decode()
+        return httpx.Response(200, json={"status": "pending"})
+
+    client = _make_client(handler)
+    try:
+        out = await client.signup_status("pt_xyz")
+    finally:
+        await client.aclose()
+    assert seen["url"] == "https://example.test/match/v1/signup/status"
+    assert '"polling_token":"pt_xyz"' in seen["body"]
+    assert out["status"] == "pending"
+
+
+async def test_signup_status_paid_returns_key():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"status": "paid", "api_key": "bmm_live_paid", "plan": "pro"},
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.signup_status("pt_paid")
+    finally:
+        await client.aclose()
+    assert out["status"] == "paid"
+    assert out["api_key"] == "bmm_live_paid"
+
+
+async def test_signup_status_delivered():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "delivered"})
+
+    client = _make_client(handler)
+    try:
+        out = await client.signup_status("pt_done")
+    finally:
+        await client.aclose()
+    assert out["status"] == "delivered"
+
+
+async def test_signup_status_expired_error():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            410,
+            json={
+                "detail": {
+                    "code": "SIGNUP_EXPIRED",
+                    "message_pt": "Expirou",
+                    "message_en": "Expired",
+                }
+            },
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.signup_status("pt_old")
+    finally:
+        await client.aclose()
+    assert out["error"]["code"] == "SIGNUP_EXPIRED"

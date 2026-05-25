@@ -7,6 +7,29 @@ repo's root) will be documented here. Format:
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-25
+
+### Added
+
+- `request_api_key(email, plan, cpf_cnpj?)` MCP tool — self-service signup.
+  Free plan delivers the key inline; paid plans return an Asaas checkout URL.
+- `check_signup_status(polling_token)` MCP tool — polls for paid-flow key
+  delivery (plaintext-once); server also emails the key via Brevo on paid.
+- `MatchHttpClient.signup_start()` and `signup_status()` low-level methods.
+- `ClientConfig.has_api_key` property.
+- Responses delivering `api_key` plaintext now include a `warning` field
+  (`code: STORE_KEY_NOW`) and a `next_steps` line leading with
+  `CRITICAL: Store this api_key NOW`. Both fields are designed so the LLM
+  consumer and any downstream API treat the key as one-time material — it
+  will not be returned again. Server-provided `warning` (when present) is
+  preserved as-is; the client only fills it in when absent.
+
+### Changed
+
+- `BRASIL_MCP_MATCH_KEY` is now OPTIONAL. Without it, the 4 verifier tools
+  return a `MISSING_API_KEY` envelope pointing users at `request_api_key`.
+  Configure the key after signup to enable verifiers.
+
 ## [0.3.0] - 2026-05-24
 
 ### BREAKING CHANGE

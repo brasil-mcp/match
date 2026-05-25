@@ -27,20 +27,27 @@ class ClientConfig:
     api_key: str
     timeout: float = _DEFAULT_TIMEOUT
 
+    @property
+    def has_api_key(self) -> bool:
+        """True when an API key is configured (non-empty)."""
+        return bool(self.api_key)
+
 
 def load_config_from_env() -> ClientConfig:
-    """Load `ClientConfig` from process env. Raises if either var is missing."""
+    """Load `ClientConfig` from process env.
+
+    `BRASIL_MCP_MATCH_URL` is required. `BRASIL_MCP_MATCH_KEY` is OPTIONAL: when
+    unset/empty, the resulting config has `has_api_key=False`, the signup tools
+    still work, and the verifier tools should short-circuit with a
+    `MISSING_API_KEY` envelope.
+    """
     base_url = os.environ.get("BRASIL_MCP_MATCH_URL")
-    api_key = os.environ.get("BRASIL_MCP_MATCH_KEY")
     if not base_url:
         raise RuntimeError(
             "BRASIL_MCP_MATCH_URL is required. "
             "Example: https://server.solidapps.tech/brasil-mcp/match"
         )
-    if not api_key:
-        raise RuntimeError(
-            "BRASIL_MCP_MATCH_KEY is required (your Brasil MCP Match API key)."
-        )
+    api_key = os.environ.get("BRASIL_MCP_MATCH_KEY") or ""
     timeout_raw = os.environ.get("BRASIL_MCP_MATCH_TIMEOUT")
     timeout = float(timeout_raw) if timeout_raw else _DEFAULT_TIMEOUT
     return ClientConfig(base_url=base_url.rstrip("/"), api_key=api_key, timeout=timeout)
@@ -122,3 +129,14 @@ class MatchHttpClient:
 
     async def match_uf(self, cnpj: str, uf: str) -> dict[str, Any]:
         return await self._post("/v1/match/uf", {"cnpj": cnpj, "uf": uf})
+
+    async def signup_start(
+        self, email: str, plan: str, cpf_cnpj: str | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"email": email, "plan": plan}
+        if cpf_cnpj is not None:
+            payload["cpf_cnpj"] = cpf_cnpj
+        return await self._post("/v1/signup/start", payload)
+
+    async def signup_status(self, polling_token: str) -> dict[str, Any]:
+        return await self._post("/v1/signup/status", {"polling_token": polling_token})

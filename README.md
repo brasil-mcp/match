@@ -36,7 +36,42 @@ uv tool install brasil-mcp-match
 uvx brasil-mcp-match
 ```
 
-### 2. Configure your MCP client
+### 2. Sign up via MCP (no key yet — v0.4.0+)
+
+You don't need an API key to load the MCP server anymore. Configure it WITHOUT
+`BRASIL_MCP_MATCH_KEY`, then ask Claude to call the signup tools:
+
+```json
+{
+  "mcpServers": {
+    "brasil-mcp-match": {
+      "command": "uvx",
+      "args": ["brasil-mcp-match"],
+      "env": {
+        "BRASIL_MCP_MATCH_URL": "https://server.solidapps.tech/brasil-mcp/match"
+      }
+    }
+  }
+}
+```
+
+Then, in Claude:
+
+> **You:** Use brasil-mcp-match to request a free API key for me — email
+> me@example.com.
+>
+> **Claude:** (calls `request_api_key(email="me@example.com", plan="free")`)
+> Here's your key: `bmm_live_...`. Add it to `BRASIL_MCP_MATCH_KEY` in your
+> Claude Desktop config and restart Claude Desktop to use the verifier tools.
+
+For paid plans (`starter` / `pro` / `enterprise`), `request_api_key` returns a
+`checkout_url` and a `polling_token`. Pay on the URL, then have Claude call
+`check_signup_status(polling_token)` to retrieve the key (plaintext-once).
+
+Until the key is configured, the 4 verifier tools return a `MISSING_API_KEY`
+envelope guiding the user to `request_api_key`.
+
+### 3. Configure your MCP client (with the key)
 
 Claude Desktop (`claude_desktop_config.json`):
 
@@ -69,12 +104,12 @@ claude mcp add brasil-mcp-match \
 | Var | Required | Default | Description |
 |---|---|---|---|
 | `BRASIL_MCP_MATCH_URL` | yes | — | Base URL of the Match REST API (no trailing path) |
-| `BRASIL_MCP_MATCH_KEY` | yes | — | API key issued by your Match server operator |
+| `BRASIL_MCP_MATCH_KEY` | no | — | API key. Optional since v0.4.0 — without it, the 4 verifier tools return `MISSING_API_KEY` but the signup tools (`request_api_key`, `check_signup_status`) still work. |
 | `BRASIL_MCP_MATCH_TIMEOUT` | no | `10` | HTTP timeout in seconds |
 
 ## Tools exposed
 
-All 4 tools mirror the upstream Match API verbatim:
+The 4 verifier tools mirror the upstream Match API verbatim:
 
 - `match_razao_social_tool(cnpj, nome, tolerance=0.85)` — fuzzy match against
   RF-registered razão social (exact / fuzzy_prefix / fuzzy_word / fuzzy_phonetic).
@@ -87,6 +122,13 @@ All 4 tools mirror the upstream Match API verbatim:
 
 > The base excludes MEI and CNPJs not in `ativa` status — those return
 > `CNPJ_NOT_FOUND`.
+
+Plus 2 self-service signup tools (v0.4.0+):
+
+- `request_api_key(email, plan="free", cpf_cnpj=None)` — issues a key directly
+  for the free plan; returns a checkout URL + polling token for paid plans.
+- `check_signup_status(polling_token)` — polls a pending signup, returns the
+  key plaintext-once once payment is confirmed.
 
 ## Error envelope
 
