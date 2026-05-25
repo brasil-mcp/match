@@ -13,7 +13,7 @@ from typing import Any
 
 import psycopg
 
-from brasil_mcp_match_server.core.repository.cnpj_repo import EmpresaRecord
+from brasil_mcp_match_server.core.repository.cnpj_repo import EmpresaRecord, SocioRecord
 
 _FIND_BY_CNPJ_SQL = """
     SELECT
@@ -37,6 +37,20 @@ _FIND_BY_CNPJ_SQL = """
     LEFT JOIN simples_nacional s ON s.cnpj_basico = e.cnpj_basico
     WHERE est.cnpj_completo = %s
     LIMIT 1
+"""
+
+_FIND_SOCIOS_BY_CNPJ_BASICO_SQL = """
+    SELECT
+        nome_socio,
+        cnpj_cpf_socio,
+        identificador_socio,
+        qualificacao_socio
+    FROM socio
+    WHERE cnpj_basico = %s
+"""
+
+_QUALIFICACAO_EXISTS_SQL = """
+    SELECT 1 FROM ref_qualificacao_socio WHERE codigo = %s LIMIT 1
 """
 
 
@@ -73,3 +87,33 @@ class PostgresCnpjRepo:
             opcao_simples=row["opcao_simples"],
             opcao_mei=row["opcao_mei"],
         )
+
+    def find_socios_by_cnpj_basico(self, cnpj_basico: str) -> list[SocioRecord]:
+        with self._conn.cursor() as cur:
+            cur.execute(_FIND_SOCIOS_BY_CNPJ_BASICO_SQL, (cnpj_basico,))
+            rows = cur.fetchall()
+        if not rows:
+            return []
+        return [
+            SocioRecord(
+                nome_socio=row["nome_socio"],
+                cnpj_cpf_socio=row["cnpj_cpf_socio"],
+                identificador_socio=(
+                    int(row["identificador_socio"])
+                    if row["identificador_socio"] is not None
+                    else None
+                ),
+                qualificacao_socio=(
+                    int(row["qualificacao_socio"])
+                    if row["qualificacao_socio"] is not None
+                    else None
+                ),
+            )
+            for row in rows
+        ]
+
+    def qualificacao_codigo_exists(self, codigo: int) -> bool:
+        with self._conn.cursor() as cur:
+            cur.execute(_QUALIFICACAO_EXISTS_SQL, (codigo,))
+            row = cur.fetchone()
+        return row is not None

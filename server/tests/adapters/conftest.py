@@ -17,7 +17,7 @@ from brasil_mcp_match_server.adapters.rest.dependencies import (
 from brasil_mcp_match_server.core.auth.api_key import ApiKeyRecord, hash_key
 from brasil_mcp_match_server.core.auth.plan import Plan
 from brasil_mcp_match_server.core.lgpd.opt_out import OptOutRecord, fifteen_business_days_after
-from brasil_mcp_match_server.core.repository.cnpj_repo import EmpresaRecord
+from brasil_mcp_match_server.core.repository.cnpj_repo import EmpresaRecord, SocioRecord
 from brasil_mcp_match_server.core.signup.models import SignupRequest
 
 _PETROBRAS = EmpresaRecord(
@@ -55,15 +55,56 @@ _MEI_DEMO = EmpresaRecord(
 )
 
 
+_PETROBRAS_SOCIOS: list[SocioRecord] = [
+    SocioRecord(
+        nome_socio="JOSE PINHEIRO SILVA",
+        cnpj_cpf_socio="***123456**",
+        identificador_socio=1,
+        qualificacao_socio=10,
+    ),
+    SocioRecord(
+        nome_socio="MARIA APARECIDA SOUZA",
+        cnpj_cpf_socio="***987654**",
+        identificador_socio=1,
+        qualificacao_socio=22,
+    ),
+    SocioRecord(
+        nome_socio="HOLDING ENERGETICA S.A.",
+        cnpj_cpf_socio="11444777000161",
+        identificador_socio=2,
+        qualificacao_socio=22,
+    ),
+    SocioRecord(
+        nome_socio="JOHN SMITH",
+        cnpj_cpf_socio=None,
+        identificador_socio=3,
+        qualificacao_socio=10,
+    ),
+]
+
+
 class FakeRepo:
     def __init__(self) -> None:
         self.empresas: dict[str, EmpresaRecord] = {
             "33000167000101": _PETROBRAS,
             "11222333000181": _MEI_DEMO,
         }
+        # Keyed by cnpj_basico (first 8 digits of cnpj_completo).
+        self.socios: dict[str, list[SocioRecord]] = {
+            "33000167": list(_PETROBRAS_SOCIOS),
+            "11222333": [],  # MEI demo has no sócios
+        }
+        # Known qualificacao codes (subset of real ref_qualificacao_socio).
+        self.qualificacao_codes: set[int] = {5, 10, 16, 22, 49, 65}
 
     def find_by_cnpj(self, cnpj_completo: str) -> EmpresaRecord | None:
         return self.empresas.get(cnpj_completo)
+
+    def find_socios_by_cnpj_basico(self, cnpj_basico: str) -> list[SocioRecord]:
+        return list(self.socios.get(cnpj_basico, []))
+
+    def qualificacao_codigo_exists(self, codigo: int) -> bool:
+        return codigo in self.qualificacao_codes
 
 
 class FakeAuditStore:

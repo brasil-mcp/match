@@ -20,6 +20,7 @@ from brasil_mcp_match_server.adapters.rest.routes_internal import router as inte
 from brasil_mcp_match_server.adapters.rest.routes_lgpd import router as lgpd_router
 from brasil_mcp_match_server.adapters.rest.routes_match import router as match_router
 from brasil_mcp_match_server.adapters.rest.routes_signup import router as signup_router
+from brasil_mcp_match_server.adapters.rest.routes_socio import router as socio_router
 from brasil_mcp_match_server.adapters.rest.routes_webhooks import router as webhooks_router
 
 
@@ -62,6 +63,7 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> Response:
 
 
 app.include_router(match_router)
+app.include_router(socio_router)
 app.include_router(lgpd_router)
 app.include_router(internal_router)
 # Self-service signup + Asaas webhook. The signup endpoints are gated by the
