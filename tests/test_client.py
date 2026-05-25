@@ -405,3 +405,149 @@ async def test_signup_status_expired_error():
     finally:
         await client.aclose()
     assert out["error"]["code"] == "SIGNUP_EXPIRED"
+
+
+# ----- sócio tools (v0.5.0) -----
+
+
+async def test_socio_match_nome_forwards_payload_and_header():
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        seen["headers"] = dict(req.headers)
+        seen["body"] = req.read().decode()
+        return httpx.Response(
+            200,
+            json={
+                "query_id": "q_sn1",
+                "base_updated_at": "2026-04-01",
+                "match": True,
+                "hint": "fuzzy_word",
+                "confidence": 0.92,
+            },
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.socio_match_nome("33000167000101", "JOSE DA SILVA", 0.9)
+    finally:
+        await client.aclose()
+
+    assert out["match"] is True
+    assert out["hint"] == "fuzzy_word"
+    assert out["confidence"] == 0.92
+    assert seen["url"] == "https://example.test/match/v1/socio/match-nome"
+    assert seen["headers"]["x-brasil-mcp-key"] == "test-key"
+    assert '"cnpj":"33000167000101"' in seen["body"]
+    assert '"nome":"JOSE DA SILVA"' in seen["body"]
+    assert '"tolerance":0.9' in seen["body"]
+
+
+async def test_socio_match_cpf_forwards_payload():
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        seen["body"] = req.read().decode()
+        return httpx.Response(
+            200,
+            json={"query_id": "q_cpf", "base_updated_at": "2026-04-01", "match": False},
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.socio_match_cpf("33000167000101", "12345678901")
+    finally:
+        await client.aclose()
+
+    assert out["match"] is False
+    assert seen["url"] == "https://example.test/match/v1/socio/match-cpf"
+    assert '"cnpj":"33000167000101"' in seen["body"]
+    assert '"cpf":"12345678901"' in seen["body"]
+
+
+async def test_socio_match_cnpj_socio_forwards_payload():
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        seen["body"] = req.read().decode()
+        return httpx.Response(
+            200,
+            json={"query_id": "q_pj", "base_updated_at": "2026-04-01", "match": True},
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.socio_match_cnpj_socio(
+            "33000167000101", "00000000000191"
+        )
+    finally:
+        await client.aclose()
+
+    assert out["match"] is True
+    assert seen["url"] == "https://example.test/match/v1/socio/match-cnpj-socio"
+    assert '"cnpj":"33000167000101"' in seen["body"]
+    assert '"cnpj_socio":"00000000000191"' in seen["body"]
+
+
+async def test_socio_check_qualificacao_forwards_payload():
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        seen["body"] = req.read().decode()
+        return httpx.Response(
+            200,
+            json={
+                "query_id": "q_q",
+                "base_updated_at": "2026-04-01",
+                "exists": True,
+                "count": 2,
+            },
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.socio_check_qualificacao("33000167000101", 49)
+    finally:
+        await client.aclose()
+
+    assert out["exists"] is True
+    assert out["count"] == 2
+    assert seen["url"] == "https://example.test/match/v1/socio/check-qualificacao"
+    assert '"cnpj":"33000167000101"' in seen["body"]
+    assert '"qualificacao":49' in seen["body"]
+
+
+async def test_socio_count_forwards_payload():
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        seen["body"] = req.read().decode()
+        return httpx.Response(
+            200,
+            json={
+                "query_id": "q_c",
+                "base_updated_at": "2026-04-01",
+                "total": 5,
+                "pf": 3,
+                "pj": 1,
+                "estrangeiro": 1,
+            },
+        )
+
+    client = _make_client(handler)
+    try:
+        out = await client.socio_count("33000167000101")
+    finally:
+        await client.aclose()
+
+    assert out["total"] == 5
+    assert out["pf"] == 3
+    assert out["pj"] == 1
+    assert out["estrangeiro"] == 1
+    assert seen["url"] == "https://example.test/match/v1/socio/count"
+    assert '"cnpj":"33000167000101"' in seen["body"]

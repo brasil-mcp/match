@@ -1,6 +1,6 @@
 [project]
 name = "brasil-mcp-match"
-version = "0.4.0"
+version = "0.5.0"
 description = "MCP stdio client for the Brasil MCP Match REST API. Privacy-preserving CNPJ verification (KYC, anti-fraud, LGPD) from your Claude Desktop / Claude Code."
 readme = "README.md"
 license = { text = "MIT" }

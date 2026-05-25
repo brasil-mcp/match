@@ -1,12 +1,13 @@
 """MCP stdio server — forwards each tool call to the Brasil MCP Match REST API.
 
 Tools mirror the upstream 4 v0.1.0 verifiers plus 2 v0.4.0 self-service signup
-tools. Each call is an HTTPS POST against ``BRASIL_MCP_MATCH_URL``. Verifier
-calls send ``X-Brasil-MCP-Key``; signup calls are unauthenticated.
+tools plus 5 v0.5.0 sócio-verification tools. Each call is an HTTPS POST
+against ``BRASIL_MCP_MATCH_URL``. Verifier and sócio calls send
+``X-Brasil-MCP-Key``; signup calls are unauthenticated.
 
 ``BRASIL_MCP_MATCH_KEY`` is optional. Without it the signup tools still work,
-and the verifier tools return a ``MISSING_API_KEY`` error envelope guiding the
-user to ``request_api_key``.
+and the verifier + sócio tools return a ``MISSING_API_KEY`` error envelope
+guiding the user to ``request_api_key``.
 """
 # pyright: reportUnusedFunction=false
 # (FastMCP collects the @mcp.tool() decorated inner functions via side effect.)
@@ -122,7 +123,7 @@ def _augment_signup_status(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_server(client: MatchHttpClient, config: ClientConfig) -> FastMCP:
-    """Construct a FastMCP server and register the 4 verifier + 2 signup tools."""
+    """Construct a FastMCP server and register the 4 verifier + 2 signup + 5 sócio tools."""
     mcp = FastMCP("brasil-mcp-match-client")
 
     def _require_key_or_error() -> dict[str, Any] | None:
@@ -179,6 +180,50 @@ def build_server(client: MatchHttpClient, config: ClientConfig) -> FastMCP:
         """Consulta status de um signup pendente. Use o polling_token que veio do request_api_key. Retorna {status:'pending'} (aguarde pagamento), {status:'paid', api_key, plan} (1ª chamada após Asaas confirmar — copie a key pra BRASIL_MCP_MATCH_KEY no seu config), {status:'delivered'} (key já entregue, regenere via novo request_api_key) ou 410 SIGNUP_EXPIRED."""
         result = await client.signup_status(polling_token)
         return _augment_signup_status(result)
+
+    @mcp.tool()
+    async def match_nome_socio_tool(
+        cnpj: str, nome: str, tolerance: float = 0.85
+    ) -> dict[str, Any]:
+        """Verifica se o nome informado bate com algum sócio registrado do CNPJ. Retorna match boolean + hint + confidence, sem revelar QUAL sócio nem o nome completo do sócio matched. Útil pra KYC ('o cliente que está abrindo conta é sócio?'), anti-fraude e due diligence. Hints: 'exact' | 'fuzzy_prefix' | 'fuzzy_word' | 'fuzzy_phonetic' | 'no_match'. NOTA: a base do Match exclui MEI e CNPJs não-ativos — CNPJs nesses casos retornam CNPJ_NOT_FOUND."""
+        err = _require_key_or_error()
+        if err is not None:
+            return err
+        return await client.socio_match_nome(cnpj, nome, tolerance)
+
+    @mcp.tool()
+    async def match_cpf_socio_tool(cnpj: str, cpf: str) -> dict[str, Any]:
+        """Verifica se o CPF informado é de algum sócio PF do CNPJ. Retorna match boolean. Privacy-preserving: a base só armazena CPF mascarado pela RF (***XXXXXX**), e a tool compara o middle do CPF informado sem revelar dados. Útil pra KYC, anti-fraude e validação de assinatura. CNPJs MEI ou não-ativos retornam CNPJ_NOT_FOUND."""
+        err = _require_key_or_error()
+        if err is not None:
+            return err
+        return await client.socio_match_cpf(cnpj, cpf)
+
+    @mcp.tool()
+    async def match_cnpj_socio_tool(cnpj: str, cnpj_socio: str) -> dict[str, Any]:
+        """Verifica se a empresa cnpj_socio está registrada como sócia PJ do CNPJ pai. Útil pra detectar holdings, estrutura societária e cross-ownership. Retorna match boolean. CNPJs MEI ou não-ativos retornam CNPJ_NOT_FOUND."""
+        err = _require_key_or_error()
+        if err is not None:
+            return err
+        return await client.socio_match_cnpj_socio(cnpj, cnpj_socio)
+
+    @mcp.tool()
+    async def check_qualificacao_socio_tool(
+        cnpj: str, qualificacao: int
+    ) -> dict[str, Any]:
+        """Verifica se o CNPJ tem algum sócio com a qualificação informada (código RF — ver tabela ref_qualificacao_socio: 5=Administrador, 22=Sócio, 49=Sócio-Administrador, 65=Titular Pessoa Física Residente ou Domiciliado no Brasil, etc.). Retorna {exists: bool, count: int} sem revelar quem. Útil pra compliance e validação de assinatura autorizada."""
+        err = _require_key_or_error()
+        if err is not None:
+            return err
+        return await client.socio_check_qualificacao(cnpj, qualificacao)
+
+    @mcp.tool()
+    async def count_socios_tool(cnpj: str) -> dict[str, Any]:
+        """Retorna o total de sócios do CNPJ + breakdown por identificador (PF/PJ/estrangeiro). Apenas agregação numérica — nenhum dado pessoal exposto. Útil pra entender porte do quadro societário antes de outras checks."""
+        err = _require_key_or_error()
+        if err is not None:
+            return err
+        return await client.socio_count(cnpj)
 
     return mcp
 

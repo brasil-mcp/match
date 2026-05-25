@@ -69,6 +69,55 @@ class _StubClient:
         self.calls.append(("signup_status", {"polling_token": polling_token}))
         return self.signup_status_response
 
+    async def socio_match_nome(
+        self, cnpj: str, nome: str, tolerance: float
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "socio_match_nome",
+                {"cnpj": cnpj, "nome": nome, "tolerance": tolerance},
+            )
+        )
+        return {
+            "match": True,
+            "hint": "fuzzy_word",
+            "confidence": 0.92,
+            "query_id": "qs1",
+        }
+
+    async def socio_match_cpf(self, cnpj: str, cpf: str) -> dict[str, Any]:
+        self.calls.append(("socio_match_cpf", {"cnpj": cnpj, "cpf": cpf}))
+        return {"match": False, "query_id": "qs2"}
+
+    async def socio_match_cnpj_socio(
+        self, cnpj: str, cnpj_socio: str
+    ) -> dict[str, Any]:
+        self.calls.append(
+            ("socio_match_cnpj_socio", {"cnpj": cnpj, "cnpj_socio": cnpj_socio})
+        )
+        return {"match": True, "query_id": "qs3"}
+
+    async def socio_check_qualificacao(
+        self, cnpj: str, qualificacao: int
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "socio_check_qualificacao",
+                {"cnpj": cnpj, "qualificacao": qualificacao},
+            )
+        )
+        return {"exists": True, "count": 2, "query_id": "qs4"}
+
+    async def socio_count(self, cnpj: str) -> dict[str, Any]:
+        self.calls.append(("socio_count", {"cnpj": cnpj}))
+        return {
+            "total": 5,
+            "pf": 3,
+            "pj": 1,
+            "estrangeiro": 1,
+            "query_id": "qs5",
+        }
+
 
 def _config_with_key() -> ClientConfig:
     return ClientConfig(base_url="https://example.test", api_key="k", timeout=5.0)
@@ -116,15 +165,24 @@ def _payload_dict(call_result: Any) -> dict[str, Any]:
 async def test_server_registers_all_tools(server) -> None:
     tools = await server.list_tools()
     names = {t.name for t in tools}
-    assert {
+    expected = {
+        # verifiers
         "match_razao_social_tool",
         "check_situacao_cadastral_tool",
         "check_porte_empresa_tool",
         "match_uf_tool",
+        # signup
         "request_api_key",
         "check_signup_status",
-    }.issubset(names)
-    assert len(names) >= 6
+        # sócio
+        "match_nome_socio_tool",
+        "match_cpf_socio_tool",
+        "match_cnpj_socio_tool",
+        "check_qualificacao_socio_tool",
+        "count_socios_tool",
+    }
+    assert expected.issubset(names)
+    assert len(names) == 11
 
 
 # ----- verifier tools (key present) -----
@@ -452,3 +510,140 @@ def test_augment_signup_status_preserves_server_warning():
         {"status": "paid", "api_key": "k", "warning": server_warning}
     )
     assert out["warning"] is server_warning
+
+
+# ----- sócio tools (v0.5.0) — key present -----
+
+
+@pytest.mark.asyncio
+async def test_match_nome_socio_tool_forwards(server, stub_client) -> None:
+    await server.call_tool(
+        "match_nome_socio_tool",
+        {"cnpj": "33000167000101", "nome": "JOSE DA SILVA", "tolerance": 0.9},
+    )
+    assert stub_client.calls == [
+        (
+            "socio_match_nome",
+            {"cnpj": "33000167000101", "nome": "JOSE DA SILVA", "tolerance": 0.9},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_match_nome_socio_tool_default_tolerance(server, stub_client) -> None:
+    await server.call_tool(
+        "match_nome_socio_tool",
+        {"cnpj": "33000167000101", "nome": "JOSE DA SILVA"},
+    )
+    assert stub_client.calls[0][1]["tolerance"] == 0.85
+
+
+@pytest.mark.asyncio
+async def test_match_cpf_socio_tool_forwards(server, stub_client) -> None:
+    await server.call_tool(
+        "match_cpf_socio_tool", {"cnpj": "33000167000101", "cpf": "12345678901"}
+    )
+    assert stub_client.calls == [
+        ("socio_match_cpf", {"cnpj": "33000167000101", "cpf": "12345678901"})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_match_cnpj_socio_tool_forwards(server, stub_client) -> None:
+    await server.call_tool(
+        "match_cnpj_socio_tool",
+        {"cnpj": "33000167000101", "cnpj_socio": "00000000000191"},
+    )
+    assert stub_client.calls == [
+        (
+            "socio_match_cnpj_socio",
+            {"cnpj": "33000167000101", "cnpj_socio": "00000000000191"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_check_qualificacao_socio_tool_forwards(server, stub_client) -> None:
+    await server.call_tool(
+        "check_qualificacao_socio_tool",
+        {"cnpj": "33000167000101", "qualificacao": 49},
+    )
+    assert stub_client.calls == [
+        (
+            "socio_check_qualificacao",
+            {"cnpj": "33000167000101", "qualificacao": 49},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_count_socios_tool_forwards(server, stub_client) -> None:
+    await server.call_tool("count_socios_tool", {"cnpj": "33000167000101"})
+    assert stub_client.calls == [("socio_count", {"cnpj": "33000167000101"})]
+
+
+# ----- sócio tools — no key — MISSING_API_KEY gate -----
+
+
+@pytest.mark.asyncio
+async def test_match_nome_socio_without_key_returns_missing_envelope(
+    server_no_key, stub_client
+) -> None:
+    result = await server_no_key.call_tool(
+        "match_nome_socio_tool",
+        {"cnpj": "33000167000101", "nome": "JOSE DA SILVA"},
+    )
+    payload = _payload_dict(result)
+    assert payload["error"]["code"] == "MISSING_API_KEY"
+    assert stub_client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_match_cpf_socio_without_key_returns_missing_envelope(
+    server_no_key, stub_client
+) -> None:
+    result = await server_no_key.call_tool(
+        "match_cpf_socio_tool",
+        {"cnpj": "33000167000101", "cpf": "12345678901"},
+    )
+    payload = _payload_dict(result)
+    assert payload["error"]["code"] == "MISSING_API_KEY"
+    assert stub_client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_match_cnpj_socio_without_key_returns_missing_envelope(
+    server_no_key, stub_client
+) -> None:
+    result = await server_no_key.call_tool(
+        "match_cnpj_socio_tool",
+        {"cnpj": "33000167000101", "cnpj_socio": "00000000000191"},
+    )
+    payload = _payload_dict(result)
+    assert payload["error"]["code"] == "MISSING_API_KEY"
+    assert stub_client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_check_qualificacao_socio_without_key_returns_missing_envelope(
+    server_no_key, stub_client
+) -> None:
+    result = await server_no_key.call_tool(
+        "check_qualificacao_socio_tool",
+        {"cnpj": "33000167000101", "qualificacao": 49},
+    )
+    payload = _payload_dict(result)
+    assert payload["error"]["code"] == "MISSING_API_KEY"
+    assert stub_client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_count_socios_without_key_returns_missing_envelope(
+    server_no_key, stub_client
+) -> None:
+    result = await server_no_key.call_tool(
+        "count_socios_tool", {"cnpj": "33000167000101"}
+    )
+    payload = _payload_dict(result)
+    assert payload["error"]["code"] == "MISSING_API_KEY"
+    assert stub_client.calls == []

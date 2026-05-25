@@ -130,6 +130,39 @@ Plus 2 self-service signup tools (v0.4.0+):
 - `check_signup_status(polling_token)` — polls a pending signup, returns the
   key plaintext-once once payment is confirmed.
 
+Plus 5 sócio-verification tools (v0.5.0+), all privacy-preserving:
+
+- `match_nome_socio_tool(cnpj, nome, tolerance=0.85)` — fuzzy match the name
+  against any sócio registered for the CNPJ. Returns `{match, hint, confidence}`
+  without revealing which sócio or the full registered name.
+- `match_cpf_socio_tool(cnpj, cpf)` — verify a CPF belongs to a sócio PF.
+  Mask-aware (the RF base only stores `***XXXXXX**`); returns boolean only.
+- `match_cnpj_socio_tool(cnpj, cnpj_socio)` — verify that `cnpj_socio` is a
+  sócio PJ of the parent `cnpj`. Useful for holding / cross-ownership detection.
+- `check_qualificacao_socio_tool(cnpj, qualificacao)` — does the CNPJ have any
+  sócio with the given RF qualificação code? Returns `{exists, count}` only,
+  never names.
+- `count_socios_tool(cnpj)` — aggregate counts only:
+  `{total, pf, pj, estrangeiro}`. No PII.
+
+> Same `BRASIL_MCP_MATCH_KEY` gate applies to the sócio tools. CNPJs that are
+> MEI or not in `ativa` status return `CNPJ_NOT_FOUND`.
+
+### Why sócio verification?
+
+- **KYC** — "Is the person opening this account actually a sócio of the
+  company they claim to represent?" — answer yes/no without ever pulling the
+  full sócio list.
+- **Anti-fraude (detecção de laranja)** — confirm CPFs and names against the
+  real RF-registered quadro societário before disbursing credit or onboarding
+  a partner.
+- **Due diligence M&A** — detect holding / cross-ownership structures via
+  `match_cnpj_socio_tool` and quantify the quadro societário via
+  `count_socios_tool` without ingesting third-party PII.
+- **Compliance (PEP screening)** — combine `check_qualificacao_socio_tool`
+  with downstream PEP lists to flag administrative-power changes without
+  exposing the underlying sócio identities upstream.
+
 ## Error envelope
 
 Network/HTTP failures become a JSON envelope so tool callers always see the

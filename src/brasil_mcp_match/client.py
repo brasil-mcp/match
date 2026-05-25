@@ -140,3 +140,33 @@ class MatchHttpClient:
 
     async def signup_status(self, polling_token: str) -> dict[str, Any]:
         return await self._post("/v1/signup/status", {"polling_token": polling_token})
+
+    async def socio_match_nome(
+        self, cnpj: str, nome: str, tolerance: float
+    ) -> dict[str, Any]:
+        return await self._post(
+            "/v1/socio/match-nome",
+            {"cnpj": cnpj, "nome": nome, "tolerance": tolerance},
+        )
+
+    async def socio_match_cpf(self, cnpj: str, cpf: str) -> dict[str, Any]:
+        return await self._post("/v1/socio/match-cpf", {"cnpj": cnpj, "cpf": cpf})
+
+    async def socio_match_cnpj_socio(
+        self, cnpj: str, cnpj_socio: str
+    ) -> dict[str, Any]:
+        return await self._post(
+            "/v1/socio/match-cnpj-socio",
+            {"cnpj": cnpj, "cnpj_socio": cnpj_socio},
+        )
+
+    async def socio_check_qualificacao(
+        self, cnpj: str, qualificacao: int
+    ) -> dict[str, Any]:
+        return await self._post(
+            "/v1/socio/check-qualificacao",
+            {"cnpj": cnpj, "qualificacao": qualificacao},
+        )
+
+    async def socio_count(self, cnpj: str) -> dict[str, Any]:
+        return await self._post("/v1/socio/count", {"cnpj": cnpj})

@@ -7,6 +7,20 @@ repo's root) will be documented here. Format:
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-25
+
+### Added
+
+- 5 sócio-verification MCP tools (privacy-preserving, "match don't reveal"):
+  - `match_nome_socio_tool(cnpj, nome, tolerance?)` — fuzzy match against all sócios, boolean+hint.
+  - `match_cpf_socio_tool(cnpj, cpf)` — verify CPF belongs to a sócio (mask-aware).
+  - `match_cnpj_socio_tool(cnpj, cnpj_socio)` — detect holding/cross-ownership structures.
+  - `check_qualificacao_socio_tool(cnpj, qualificacao)` — `{exists, count}` for an RF qualificação code.
+  - `count_socios_tool(cnpj)` — aggregate counts by PF/PJ/estrangeiro.
+- `MatchHttpClient.socio_match_nome()` / `socio_match_cpf()` / `socio_match_cnpj_socio()` /
+  `socio_check_qualificacao()` / `socio_count()` low-level methods.
+- All sócio tools require `BRASIL_MCP_MATCH_KEY` — same `MISSING_API_KEY` envelope path.
+
 ## [0.4.0] - 2026-05-25
 
 ### Added
